@@ -21,6 +21,8 @@
     text = text.replace(/```([\s\S]*?)```/g, function (_, c) { return '<pre><code>' + c.replace(/^\n/, '') + '</code></pre>' })
     text = text.replace(/`([^`]+)`/g, '<code>$1</code>')
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    text = text.replace(/!\[([^\]]*)\]\((https?:[^)\s]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:10px;margin:6px 0;display:block" loading="lazy">')
+    text = text.replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
     return text
   }
   function setDot(id, state) {
@@ -306,7 +308,119 @@
           headers: { Authorization: 'Bearer ' + state.gm.token }
         }).then(checkJson).then(parseGmailFull)
       }
+    },
+    web_search: {
+      description: 'Search the web WITHOUT any API key (keyless). Returns top results as readable text (titles, links, snippets). Use this to research or find sources, then read_url the best hits. This is your default search — no setup needed.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      run: function (a) {
+        return fetch('https://s.jina.ai/' + encodeURIComponent(a.query), { headers: { 'X-Respond-With': 'no-content' } })
+          .then(function (r) { return r.text() })
+          .then(function (t) { if (t.length > 7000) t = t.slice(0, 7000) + '\n\u2026[truncated]'; return { query: a.query, results: t } })
+          .catch(function (e) { throw new Error('Keyless search failed (' + e.message + '). Try read_url on a known page, or add a Firecrawl key for premium search.') })
+      }
+    },
+    read_url: {
+      description: 'Read ANY web page as clean text/markdown WITHOUT any API key (keyless). The default way to read articles, docs, and pages. Returns readable content.',
+      parameters: { type: 'object', properties: { url: { type: 'string', description: 'full URL incl. https://' } }, required: ['url'] },
+      run: function (a) {
+        return fetch('https://r.jina.ai/' + a.url).then(function (r) { return r.text() })
+          .then(function (t) { if (t.length > 9000) t = t.slice(0, 9000) + '\n\u2026[truncated]'; return { url: a.url, content: t } })
+          .catch(function (e) { throw new Error('Keyless read failed (' + e.message + '). Add a Firecrawl key for a more robust reader.') })
+      }
+    },
+    generate_image: {
+      description: 'Generate an image from a text prompt WITHOUT any API key (keyless). Returns an image_url. ALWAYS show it to the user in your reply with markdown: ![prompt](image_url).',
+      parameters: { type: 'object', properties: { prompt: { type: 'string' }, width: { type: 'number', description: 'default 1024' }, height: { type: 'number', description: 'default 1024' } }, required: ['prompt'] },
+      run: function (a) {
+        var w = a.width || 1024, h = a.height || 1024
+        var url = 'https://image.pollinations.ai/prompt/' + encodeURIComponent(a.prompt) + '?width=' + w + '&height=' + h + '&nologo=true&seed=' + Math.floor(Math.random() * 1e6)
+        return Promise.resolve({ prompt: a.prompt, image_url: url, show_with: '![' + a.prompt + '](' + url + ')' })
+      }
+    },
+    run_js: {
+      description: 'Execute JavaScript in the browser sandbox and return the result. Use for math, data processing, parsing, algorithms, generating tables/text, or any computation. Use `return` to produce output. `fetch` is available (subject to CORS).',
+      parameters: { type: 'object', properties: { code: { type: 'string', description: 'JS function body; use return to produce output' } }, required: ['code'] },
+      run: function (a) {
+        return new Promise(function (resolve) {
+          try {
+            var fn = new Function('"use strict";\n' + a.code)
+            Promise.resolve(fn()).then(
+              function (v) { resolve({ result: (typeof v === 'undefined' ? '(ran, no return value)' : v) }) },
+              function (e) { resolve({ error: String(e && e.message || e) }) }
+            )
+          } catch (e) { resolve({ error: String(e && e.message || e) }) }
+        })
+      }
+    },
+    datetime_now: {
+      description: 'Get the current date and time (local + UTC).',
+      parameters: { type: 'object', properties: {} },
+      run: function () { var d = new Date(); return Promise.resolve({ local: d.toString(), iso_utc: d.toISOString(), timestamp: d.getTime() }) }
+    },
+    create_gist: {
+      description: 'Create a GitHub Gist (a quick shareable file/snippet). Requires GitHub connected + write actions enabled. Returns the gist URL.',
+      parameters: { type: 'object', properties: { filename: { type: 'string' }, content: { type: 'string' }, description: { type: 'string' }, 'public': { type: 'boolean' } }, required: ['filename', 'content'] },
+      run: function (a) {
+        requireGitHub(); requireWrite()
+        var files = {}; files[a.filename] = { content: a.content }
+        return fetch('https://api.github.com/gists', { method: 'POST', headers: ghHeaders(), body: JSON.stringify({ description: a.description || '', 'public': !!a['public'], files: files }) })
+          .then(checkJson).then(function (g) { return { url: g.html_url, id: g.id, raw: (g.files && g.files[a.filename] && g.files[a.filename].raw_url) || null } })
+      }
+    },
+    http_request: {
+      description: 'Call ANY REST API over HTTPS \u2014 your universal connector to thousands of services (Notion, Airtable, Linear, Stripe, weather, news, CRMs \u2014 anything with an API). Provide method, url, optional headers and body. To use a saved secret safely, put {{vault:NAME}} in a header/url/body value; it is substituted on-device and NEVER sent to the model provider. Returns status + parsed JSON/text.',
+      parameters: { type: 'object', properties: {
+        method: { type: 'string', description: 'GET, POST, PUT, PATCH, DELETE (default GET)' },
+        url: { type: 'string' },
+        headers: { type: 'object', description: 'header name -> value; values may contain {{vault:NAME}}' },
+        body: { type: 'string', description: 'raw request body (usually a JSON string) for write methods' }
+      }, required: ['url'] },
+      run: function (a) {
+        var hdrs = a.headers || {}, out = {}
+        Object.keys(hdrs).forEach(function (k) { out[k] = subVault(String(hdrs[k])) })
+        var init = { method: (a.method || 'GET').toUpperCase(), headers: out }
+        if (a.body && init.method !== 'GET' && init.method !== 'HEAD') init.body = subVault(a.body)
+        return fetch(subVault(a.url), init).then(function (r) {
+          return r.text().then(function (t) {
+            var data; try { data = JSON.parse(t) } catch (e) { data = t }
+            if (typeof data === 'string' && data.length > 8000) data = data.slice(0, 8000) + '\n\u2026[truncated]'
+            return { status: r.status, ok: r.ok, data: data }
+          })
+        }).catch(function (e) { throw new Error('Request failed (' + e.message + '). Many APIs block direct browser calls via CORS; if so this service needs a backend proxy.') })
+      }
+    },
+    list_capabilities: {
+      description: 'Return DUCKi\'s full, current ability list (all tools, brains, and connection types). Call this whenever the user asks what you can do, then present it richly, grouped by category, emphasizing what the tools do TOGETHER.',
+      parameters: { type: 'object', properties: {} },
+      run: function () { return Promise.resolve(CAPABILITIES) }
     }
+  }
+
+
+  // ----- Connections vault: on-device API secrets, injected client-side only -----
+  var VAULT_KEY = 'ducki_vault_v1'
+  function loadVault() { try { return JSON.parse(LS.get(VAULT_KEY, '{}')) || {} } catch (e) { return {} } }
+  function saveVault(o) { try { LS.set(VAULT_KEY, JSON.stringify(o)) } catch (e) {} }
+  function subVault(s) { return String(s).replace(/\{\{\s*vault:([^}]+)\}\}/g, function (_, n) { var v = loadVault(); n = n.trim(); return v[n] != null ? v[n] : '' }) }
+
+  // ----- the honest, data-driven capability manifest (what "what can you do?" returns) -----
+  var CAPABILITIES = {
+    identity: 'DUCKi by AEON DUX \u2014 an autonomous agent running fully in your browser (bring-your-own-key, nothing on a server).',
+    brains: ['On-device Genius (Llama-3.2-1B, WebGPU, no key)', 'On-device Light (Qwen2.5-0.5B, no key, runs anywhere)', 'Any cloud LLM with your own key: OpenAI, Anthropic/Claude, Gemini, DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow'],
+    web_keyless: ['web_search \u2014 search the web, no key', 'read_url \u2014 read any page as clean text, no key', 'generate_image \u2014 text-to-image, no key'],
+    web_premium: ['firecrawl_search / firecrawl_scrape / firecrawl_extract (structured JSON) / firecrawl_interact (drive a browser: click, type, scroll, submit forms)'],
+    code_and_data: ['run_js \u2014 execute JavaScript for math, parsing, algorithms, data crunching', 'datetime_now'],
+    github: ['github_me, github_list_repos (incl. private), github_get_file, github_search_repos, github_create_issue, github_create_repo, github_put_file (commit/push code), create_gist'],
+    email: ['gmail_list, gmail_get (read your Gmail)'],
+    universal_connector: 'http_request \u2014 call ANY REST API (Notion, Airtable, Linear, Stripe, weather, news, CRMs, thousands more). Store keys in the Connections vault and reference them as {{vault:NAME}}; secrets are injected on-device and never sent to the model.',
+    memory: ['remember_fact \u2014 persistent on-device memory that makes DUCKi smarter every session'],
+    superpowers: [
+      'Research + build + ship: web_search \u2192 read_url \u2192 run_js \u2192 github_create_repo \u2192 github_put_file, then hand you the live links.',
+      'Connect + act: store an API key once, then http_request drives that service on command.',
+      'Automate the web: firecrawl_interact behaves like a human on JS-heavy sites and forms.',
+      'Private by default: your keys, your chats, your machine \u2014 no backend.'
+    ],
+    honest_limits: 'Runs client-side with no server, so it cannot do OAuth-only logins that need server-held secrets, or run jobs while the app is closed. Everything else \u2014 fair game.'
   }
 
   function requireGmail() { if (!state.gm.token) throw new Error('Gmail is not connected. Ask the user to click "Connect Gmail" in the sidebar.') }
@@ -355,25 +469,23 @@
   // ======================================================================
   //  LLM ADAPTERS  (normalize history -> request, response -> {text, toolCalls})
   // ======================================================================
-  var SYSTEM = 'You are DUCKi, an autonomous AI agent by AEON DUX, running live in the user\'s own browser. ' +
-    'Your name is DUCKi. You were created by AEON DUX. NEVER refer to yourself as OpenClaw, EasyClaw, Claw, or any other name, and never mention the framework you run on. If asked who you are, you are DUCKi by AEON DUX. ' +
-    'You are sharp, warm, a little witty, and genuinely helpful. You explain your reasoning and NEVER give terse, robotic, one-line answers unless the user explicitly asks for brevity. Aim for rich, well-structured replies (typically several sentences to a few short paragraphs), with concrete detail, a friendly human voice, and a brief follow-up offer or next step when useful. Write like a knowledgeable teammate, not a status terminal. ' +
-    '\n\nYOU HAVE REAL TOOLS and you USE them proactively instead of guessing or asking permission for read-only actions. Your tools: ' +
-    'github_me, github_list_repos, github_get_file, github_search_repos, github_create_issue, github_create_repo (make a new repo), github_put_file (create/update/commit a file = push code) (GitHub); ' +
-    'firecrawl_search (search the web), firecrawl_scrape (read a page as markdown), firecrawl_interact (DRIVE a browser: click/type/scroll/press/wait then read \u2014 your browser-automation hands for JS-heavy sites and forms), firecrawl_extract (pull structured JSON from a page by schema); ' +
-    'gmail_list, gmail_get (read the user\'s Gmail); remember_fact (save durable facts about the user to on-device memory). ' +
-    '\n\nHOW TO ACT: When a request needs live data, code, a repo, a web page, or email, CALL A TOOL. ' +
-    'Chain multiple tools across steps to fully finish a task (you can take several tool steps before answering) \u2014 ' +
-    'for example: search a repo, read a file, then explain it; or scrape a page, then summarize and compare it. ' +
-    'After tools return, synthesize the results into a thorough, well-structured answer with the actual findings, not just a status line. ' +
-    'Briefly narrate what you are doing as you go (e.g. "Let me pull that repo and read the file..."). ' +
-    'BE AGGRESSIVE WITH TOOLS: you can call many tools in sequence (dozens if a task needs it) before giving your final answer. Never stop early and ask the user to do something you could do with a tool. For research, default to firecrawl_search first, then firecrawl_scrape the best results, then synthesize. Do not answer from memory when a tool can get the real, current answer. ' +
-    'You DO have browser-automation power: use firecrawl_interact (click/type/scroll/press/wait then read) to behave like a human on JS-heavy sites, search boxes, and forms; use firecrawl_extract with a schema to pull specific fields. Use these confidently instead of telling the user you cannot interact with web pages. ' +
-    '\n\nWHEN THE USER ASKS YOU TO BUILD, CREATE, PUSH, OR SAVE SOMETHING: actually do it with the write tools. To create a project, call github_create_repo, then github_put_file for each file (a repo made with auto_init already has a README so you can commit right away). Do NOT just describe what you would do \u2014 perform the tool calls, then report the repo URL and commit links. ' +
-    'Write actions change the user\'s data, so do them when the user asks for work to be created or saved, and always confirm afterward with the real links. ' +
-    'If a needed tool is not connected, tell the user exactly which sidebar connection to set up (GitHub token, Gmail, or Firecrawl key) and what it will unlock. ' +
-    'If a tool errors, explain what happened in plain language and suggest a fix. ' +
-    '\n\nUse markdown: headings, bold, bullet lists, and fenced code blocks for code. Be the most capable, personable agent the user has ever used.'
+  var SYSTEM = [
+    "You are DUCKi, an autonomous AI agent by AEON DUX, running live in the user's own browser. Your name is DUCKi; you were created by AEON DUX. NEVER call yourself OpenClaw, EasyClaw, Claw, Claude, ChatGPT, or any other name, and never mention the framework or base model you run on. If asked who you are: DUCKi by AEON DUX.",
+    "VOICE: sharp, warm, a little witty, genuinely helpful. Explain your reasoning. NEVER give terse, robotic one-line answers unless asked for brevity \u2014 write rich, well-structured replies with concrete detail, a friendly human voice, and a useful next step. Write like a brilliant teammate, not a status terminal.",
+    "OPERATING LOOP (behave like a senior autonomous agent): 1) Understand the real goal. 2) Make a quick plan. 3) USE YOUR TOOLS to get real data or do real work \u2014 do not guess, and do not ask permission for read-only steps. 4) Chain many tools across steps (dozens if needed) until the task is truly finished. 5) VERIFY before you claim: something is done only when a tool result confirms it \u2014 report the real links/values, never a maybe. 6) Synthesize a thorough final answer from the actual results.",
+    "YOUR TOOLS \u2014 a compounding toolkit; use them aggressively and in combination:",
+    "\u2022 Web, NO KEY NEEDED: web_search (search the web keyless), read_url (read any page as clean text keyless), generate_image (text-to-image keyless \u2014 ALWAYS show the result with markdown ![prompt](image_url)). These work with zero setup, so never tell the user you can't browse or make images.",
+    "\u2022 Web, premium (free Firecrawl key): firecrawl_search, firecrawl_scrape, firecrawl_extract (structured JSON by schema), firecrawl_interact (DRIVE a browser: click/type/scroll/press/wait then read \u2014 real automation for JS-heavy sites and forms).",
+    "\u2022 Code & data: run_js (execute JavaScript for math, parsing, algorithms, data crunching, building tables). datetime_now.",
+    "\u2022 GitHub: github_me, github_list_repos (incl. private), github_get_file, github_search_repos, github_create_issue, github_create_repo, github_put_file (create/commit files = push code), create_gist (shareable snippet).",
+    "\u2022 Gmail: gmail_list, gmail_get.",
+    "\u2022 UNIVERSAL CONNECTOR: http_request \u2014 call ANY REST API over HTTPS (Notion, Airtable, Linear, Stripe, weather, news, CRMs \u2014 thousands of services). This is how you reach almost anything. To use a saved secret safely, put {{vault:NAME}} in a header/url/body value; it is substituted on-device and never sent to the model provider. If a service has an API, wire it with http_request instead of saying you can't.",
+    "\u2022 Memory: remember_fact (save durable facts about the user to on-device memory so you get smarter every session). list_capabilities (your full current ability list).",
+    "WHEN ASKED 'what can you do?' or anything about your abilities: CALL list_capabilities, then present the full compounded picture grouped by category \u2014 never a short canned blurb. Emphasize what the tools do TOGETHER (research+build+push, connect+act, read+automate).",
+    "BUILDING: when asked to build/create/push/save, actually do it \u2014 github_create_repo then github_put_file for each file \u2014 and report the real repo + commit URLs. Perform the actions; don't just describe them.",
+    "KEYS & CONNECTIONS: read-only web and image generation need no key. Premium web wants a free Firecrawl key; GitHub wants a token; Gmail is one click; any other API just needs a key added to the Connections vault. If a tool isn't connected, tell the user exactly which sidebar connection unlocks it. If a tool errors, explain plainly and suggest a fix.",
+    "HONESTY: you run fully client-side with no server, and you can do a great deal this way. If something genuinely needs a backend (OAuth-only logins, jobs that run while the app is closed), say so honestly instead of pretending. Use markdown throughout. Be the most capable, personable agent the user has ever used."
+  ].join('\n\n')
 
   // ----- persona-only system for on-device (tool-free) brains -----
   var PERSONA = 'You are DUCKi, an AI assistant by AEON DUX, running 100% on the user\'s own device in their browser \u2014 no server, no API key, fully private. ' +
@@ -778,6 +890,17 @@
     setDot('dot-llm', odIsProvider(p) ? ((odGenius || odLight) ? 'on' : '') : (state.llm.key ? 'on' : ''))
   }
 
+  function renderVault() {
+    var el = $('vaultList'); if (!el) return
+    var v = loadVault(), names = Object.keys(v)
+    setDot('dot-vault', names.length ? 'on' : '')
+    if (!names.length) { el.innerHTML = 'No keys saved yet.'; return }
+    el.innerHTML = names.map(function (n) { return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin:3px 0"><code>' + esc(n) + '</code> <button class="vault-del" data-n="' + esc(n) + '" style="margin:0;padding:1px 7px;font-size:11px">remove</button></div>' }).join('')
+    Array.prototype.forEach.call(el.querySelectorAll('.vault-del'), function (b) {
+      b.addEventListener('click', function () { var o = loadVault(); delete o[b.getAttribute('data-n')]; saveVault(o); renderVault() })
+    })
+  }
+
   function initEvents() {
     $('originHint').textContent = location.origin
 
@@ -827,6 +950,15 @@
     if (ex) ex.addEventListener('click', function (e) {
       var b = e.target.closest('button'); if (!b) return
       $('input').value = b.getAttribute('data-ex'); autosize($('input')); $('input').focus()
+    })
+
+    var svb = $('saveVault')
+    if (svb) svb.addEventListener('click', function () {
+      var n = $('vaultName').value.trim(), val = $('vaultValue').value.trim()
+      if (!n || !val) { status('vaultStatus', 'Enter a name and a secret.', 'err'); return }
+      var o = loadVault(); o[n] = val; saveVault(o)
+      $('vaultName').value = ''; $('vaultValue').value = ''
+      status('vaultStatus', '✓ Saved ' + n, 'ok'); renderVault()
     })
 
     $('menuBtn').addEventListener('click', function () { $('sidebar').classList.toggle('open') })
@@ -897,6 +1029,7 @@
     if (state.gm.clientId) $('gmClientId').value = state.gm.clientId
 
     $('allowWrites').checked = state.allowWrites
+    renderVault()
   }
 
   document.addEventListener('DOMContentLoaded', function () { initEvents(); restore() })
