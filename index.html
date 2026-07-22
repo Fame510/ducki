@@ -512,8 +512,8 @@
         </div>
         <details class="jv-set">
           <summary>⚙️ Settings</summary>
-          <div class="jv-row"><div><label>AI brain</label><div class="d">Local model runs 100% in-browser. Smart reply is instant with no download.</div></div>
-            <select id="jvBrain"><option value="fallback">Smart reply (instant)</option><option value="llm">Local LLM (Qwen2.5-0.5B ~400MB)</option></select></div>
+          <div class="jv-row"><div><label>AI brain</label><div class="d">Runs 100% on your device. Genius mode (Llama-3.2-1B) needs a WebGPU browser (Chrome on Android/desktop) and auto-falls back to the light model otherwise.</div></div>
+            <select id="jvBrain"><option value="fallback">Smart reply (instant)</option><option value="llm">Light on-device (Qwen2.5-0.5B ~400MB)</option><option value="webllm">Genius mode — Llama-3.2-1B on-device (WebGPU ~900MB)</option></select></div>
           <div class="jv-row"><div><label>Voice</label></div><select id="jvVoice"></select></div>
           <div class="jv-row"><div><label>Speech rate</label></div><input type="range" id="jvRate" min="0.7" max="1.4" step="0.05" value="1"></div>
           <div class="jv-row"><div><label>Pitch</label></div><input type="range" id="jvPitch" min="0.6" max="1.3" step="0.05" value="0.95"></div>
@@ -590,6 +590,28 @@
         return g(msgs,{max_new_tokens:200,temperature:0.7,do_sample:true}).then(function(out){var r=out[0].generated_text;
           if(Array.isArray(r))r=r[r.length-1].content;else if(typeof r==='string'){var p=r.split('assistant');r=(p[p.length-1]||r).trim();}
           return (r||'').trim()||fb(text);});});}
+
+      /* Genius mode: a bigger on-device model via WebLLM (WebGPU). Runs fully in the browser,
+         no server, no key. Falls back to the light model when WebGPU is unavailable. */
+      var wllm=null,wllmLoading=false,WLLM_MODEL='Llama-3.2-1B-Instruct-q4f32_1-MLC';
+      function wllmLoad(){
+        if(wllm)return Promise.resolve(wllm);
+        if(wllmLoading)return Promise.resolve(null);
+        if(!navigator.gpu){note('Genius mode needs a WebGPU browser (Chrome on Android/desktop) \u2014 using the light on-device model instead.',8000);$('jvBrain').value='llm';return llmLoad().then(function(){return null;});}
+        wllmLoading=true;setState('thinking');note('Loading genius model (Llama-3.2-1B) on your device\u2026 first load ~900MB, then it caches.',0);
+        return import('https://esm.run/@mlc-ai/web-llm@0.2.79').then(function(M){
+          return M.CreateMLCEngine(WLLM_MODEL,{initProgressCallback:function(p){note('Genius model: '+((p&&p.text)||'loading\u2026'),0);}});
+        }).then(function(e){wllm=e;note('Genius mode ready \u2014 running fully on your device.');return e;})
+        .catch(function(err){console.error(err);note('Genius model couldn\u2019t load here \u2014 switching to the light on-device model.',8000);$('jvBrain').value='llm';return null;})
+        .then(function(e){wllmLoading=false;setState('idle');return e;});
+      }
+      function wllmReply(text,history){return wllmLoad().then(function(e){if(!e)return llmReply(text,history);
+        var name=$('jvName').value.trim();var sys=CFG.PERS+(name?(" The user's name is "+name+"."):"");
+        var msgs=[{role:'system',content:sys}];history.slice(-CFG.MAX).forEach(function(m){msgs.push({role:m.role,content:m.content});});msgs.push({role:'user',content:text});
+        setState('thinking');
+        return e.chat.completions.create({messages:msgs,temperature:0.7,max_tokens:300}).then(function(r){
+          var out=r&&r.choices&&r.choices[0]&&r.choices[0].message&&r.choices[0].message.content;
+          return (out||'').trim()||fb(text);});});}
 
       /* ===== On-device speech: Whisper via transformers.js (100% local, works on Android Chrome) =====
          The command mic uses getUserMedia + MediaRecorder, then transcribes with Whisper-tiny in the
@@ -701,7 +723,7 @@
       function stopWake(){if(wakeRecog){try{wakeRecog.onend=null;wakeRecog.stop();}catch(x){}wakeRecog=null;}listening=false;}
 
       function handleInput(text){bubble('user',text);memAdd('user',text);setState('thinking');
-        memAll().then(function(history){return $('jvBrain').value==='llm'?llmReply(text,history):Promise.resolve(fb(text));})
+        memAll().then(function(history){var brain=$('jvBrain').value;return brain==='webllm'?wllmReply(text,history):brain==='llm'?llmReply(text,history):Promise.resolve(fb(text));})
         .catch(function(){return fb(text);}).then(function(reply){bubble('assistant',reply);memAdd('assistant',reply);
           return speak(reply);}).then(function(){setState('idle');if(wakeOn)startWake();});}
 
@@ -720,7 +742,7 @@
       $('jvStop').onclick=function(){ttsStop();stopRecording();stopWake();if(wakeOn)startWake();setState('idle');};
       $('jvWake').onclick=function(){wakeOn=!wakeOn;$('jvWake').textContent='\uD83D\uDC42 Wake word: '+(wakeOn?'On':'Off');if(wakeOn){note('Listening for "Hey DUCKi"\u2026');startWake();}else{stopWake();}};
       $('jvLoadLLM').onclick=function(){$('jvBrain').value='llm';llmLoad();};
-      $('jvBrain').onchange=function(){if($('jvBrain').value==='llm')llmLoad();};
+      $('jvBrain').onchange=function(){var b=$('jvBrain').value;if(b==='llm')llmLoad();else if(b==='webllm')wllmLoad();};
       $('jvSend').onclick=function(){var t=$('jvText').value.trim();if(t){$('jvText').value='';handleInput(t);}};
       $('jvText').onkeydown=function(e){if(e.key==='Enter'){var t=$('jvText').value.trim();if(t){$('jvText').value='';handleInput(t);}}};
       $('jvClear').onclick=function(){memClear().then(function(){$('jvLog').innerHTML='';bubble('system','Memory cleared.');});};
