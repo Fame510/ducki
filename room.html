@@ -81,6 +81,8 @@
       <h1>Welcome to The Duck House 🦆</h1>
       <p>Live video with up to 6 people, peer-to-peer. Pick a nickname, then start a room or join one with a code. 📹📞</p>
       <div id="inviteBanner" class="hint hidden" style="color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:10px 12px"></div>
+      <div id="lobbyLive" class="hint" style="display:flex;align-items:center;gap:8px;color:var(--green);border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:4px"><span class="dot-live"></span><span id="lobbyLiveText">Connecting to the live lobby…</span></div>
+      <div id="onlineAliases" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
       <label>Anonymous nickname</label>
       <input id="nick" maxlength="20" placeholder="e.g. NightOwl, Maverick…" />
       <label>Room code (to join an existing room)</label>
@@ -90,6 +92,9 @@
       </div>
       <div style="margin-top:18px">
         <button class="btn-primary" id="createBtn" style="width:100%">Create a new room</button>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn-ghost" id="autoBtn" style="width:100%">🎯 Find an open house — auto-join the next open room</button>
       </div>
       <div class="hint">Your camera/mic stay on your device and connect directly to others (peer-to-peer). The room creator is the host: they approve who joins and can remove anyone. <br/><a class="back" href="app.html">← Back to DUCKi console</a></div>
     </div>
@@ -117,6 +122,7 @@
   <div class="toasts" id="toasts"></div>
 
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <script>window.DUCKHOUSE_SB={url:"https://kdqbwdvobkwkakzzowqm.supabase.co",key:"sb_publishable_NSsKpjhsBRyPVzBi0QWBdQ_QOx0Zkj5"};</script>
   <script src="rooms.js"></script>
 </body>
 </html>
