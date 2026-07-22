@@ -7,6 +7,16 @@
 
   // ----- tiny helpers -----
   var $ = function (id) { return document.getElementById(id) }
+  // On-device LLMs need desktop-class memory; phones/tablets crash the tab ("Aw, Snap").
+  function isMobileLike() {
+    try {
+      var ua = navigator.userAgent || ''
+      if (/Mobi|Android|iPhone|iPod|IEMobile|BlackBerry|Windows Phone/i.test(ua)) return true
+      var touch = (navigator.maxTouchPoints || 0) > 1
+      var small = Math.min(screen.width || 9999, screen.height || 9999) < 820
+      return touch && small
+    } catch (e) { return false }
+  }
   var LS = {
     get: function (k, d) { try { var v = localStorage.getItem(k); return v === null ? d : v } catch (e) { return d } },
     set: function (k, v) { try { localStorage.setItem(k, v) } catch (e) {} }
@@ -44,6 +54,7 @@
     glm: 'glm-4-flash',
     qwen: 'qwen-turbo',
     kimi: 'moonshot-v1-8k',
+    groq: 'llama-3.3-70b-versatile',
     openrouter: 'deepseek/deepseek-chat-v3-0324:free',
     siliconflow: 'deepseek-ai/DeepSeek-V3',
     ondevice: 'Llama-3.2-1B (on-device, no key)',
@@ -57,6 +68,7 @@
     glm: ['glm-4-flash', 'glm-4-plus', 'glm-4-air', 'glm-4-long'],
     qwen: ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen2.5-72b-instruct'],
     kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
+    groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'gemma2-9b-it', 'deepseek-r1-distill-llama-70b'],
     openrouter: ['deepseek/deepseek-chat-v3-0324:free', 'deepseek/deepseek-r1:free', 'qwen/qwen-2.5-72b-instruct', 'meta-llama/llama-3.3-70b-instruct', 'google/gemini-2.0-flash-exp:free'],
     siliconflow: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct', 'Qwen/QwQ-32B', 'THUDM/glm-4-9b-chat']
   }
@@ -406,7 +418,7 @@
   // ----- the honest, data-driven capability manifest (what "what can you do?" returns) -----
   var CAPABILITIES = {
     identity: 'DUCKi by AEON DUX \u2014 an autonomous agent running fully in your browser (bring-your-own-key, nothing on a server).',
-    brains: ['On-device Genius (Llama-3.2-1B, WebGPU, no key)', 'On-device Light (Qwen2.5-0.5B, no key, runs anywhere)', 'Any cloud LLM with your own key: OpenAI, Anthropic/Claude, Gemini, DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow'],
+    brains: ['On-device Genius (Llama-3.2-1B, WebGPU) & On-device Light (Qwen2.5-0.5B) \u2014 no key, fully private; DESKTOP only (phones lack the memory)', 'Any cloud LLM with your own key (works on phone too): Groq (free, very fast), Google Gemini (free), OpenAI, Anthropic/Claude, DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow'],
     web_keyless: ['web_search \u2014 search the web, no key', 'read_url \u2014 read any page as clean text, no key', 'generate_image \u2014 text-to-image, no key'],
     web_premium: ['firecrawl_search / firecrawl_scrape / firecrawl_extract (structured JSON) / firecrawl_interact (drive a browser: click, type, scroll, submit forms)'],
     code_and_data: ['run_js \u2014 execute JavaScript for math, parsing, algorithms, data crunching', 'datetime_now'],
@@ -531,7 +543,10 @@
       .catch(function (err) { odLightLoading = null; setDot('dot-llm', 'err'); status('llmStatus', '\u2717 ' + err.message, 'err'); throw err })
     return odLightLoading
   }
-  function loadOndevice() { return state.llm.provider === 'ondevice_light' ? loadLight() : loadGenius() }
+  function loadOndevice() {
+    if (isMobileLike()) { setDot('dot-llm', 'err'); status('llmStatus', 'On-device brains need a desktop browser — a phone runs out of memory and the tab crashes. Use a cloud brain instead (Groq and Gemini have free keys), and it runs great here.', 'err'); return Promise.reject(new Error('on-device not supported on mobile')) }
+    return state.llm.provider === 'ondevice_light' ? loadLight() : loadGenius()
+  }
   function odMessages() {
     var sys = buildPersona()
     if (sys.length > 1400) sys = sys.slice(0, 1400)
@@ -728,6 +743,7 @@
     if (p === 'glm') return callOpenAI('https://open.bigmodel.cn/api/paas/v4')()
     if (p === 'qwen') return callOpenAI('https://dashscope-international.aliyuncs.com/compatible-mode/v1')()
     if (p === 'kimi') return callOpenAI('https://api.moonshot.cn/v1')()
+    if (p === 'groq') return callOpenAI('https://api.groq.com/openai/v1')()
     if (p === 'openrouter') return callOpenAI('https://openrouter.ai/api/v1')()
     if (p === 'siliconflow') return callOpenAI('https://api.siliconflow.com/v1')()
     if (p === 'anthropic') return callAnthropic()
@@ -744,6 +760,7 @@
     var inputEl = $('input')
     var text = inputEl.value.trim()
     if (!text || running) return
+    if (odIsProvider(state.llm.provider) && isMobileLike()) { banner('On-device brains need a desktop browser — a phone runs out of memory and the tab crashes. Pick a cloud brain (Groq or Gemini are free) and paste a key; it runs great on your phone.'); return }
     if (!odIsProvider(state.llm.provider) && !state.llm.key) { banner('Add an LLM API key in the sidebar — or pick an on-device brain (no key needed) at the top of the list.'); return }
     inputEl.value = ''; autosize(inputEl)
     pushUser(text)
@@ -993,6 +1010,7 @@
       glm: 'https://open.bigmodel.cn/api/paas/v4',
       qwen: 'https://dashscope-international.aliyuncs.com/compatible-mode/v1',
       kimi: 'https://api.moonshot.cn/v1',
+      groq: 'https://api.groq.com/openai/v1',
       openrouter: 'https://openrouter.ai/api/v1',
       siliconflow: 'https://api.siliconflow.com/v1'
     }
