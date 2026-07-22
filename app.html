@@ -166,6 +166,8 @@
           </div>
           <label>Provider</label>
           <select id="llmProvider">
+            <option value="ondevice">🦆 On-device — no key, private (Genius · Llama-3.2-1B)</option>
+            <option value="ondevice_light">🦆 On-device light — no key (Qwen2.5-0.5B, small &amp; fast)</option>
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="gemini">Google Gemini</option>
@@ -183,7 +185,7 @@
           <input id="llmKey" type="password" placeholder="paste key" autocomplete="off" />
           <button class="primary" id="saveLlm">Save &amp; verify</button>
           <div class="status-line" id="llmStatus"></div>
-          <div class="hint">Stored only in your browser (localStorage). Sent directly to the provider you pick.</div>
+          <div class="hint">Stored only in your browser (localStorage). Sent directly to the provider you pick. <b>On-device brains need no key at all</b> — the model downloads once and runs fully on your device (Genius needs Chrome/WebGPU; the light model runs anywhere). Tap <b>Save</b> to load it.</div>
         </div>
 
         <!-- GitHub -->
