@@ -492,14 +492,14 @@
           <div class="jv-title">🎙️ Speak to DUCK<span class="claw">i</span></div>
           <button class="jv-x" id="jvClose">Close ✕</button>
         </div>
-        <p class="jv-hint" style="margin-bottom:4px">Fully on-device — wake word, speech, an in-browser AI, and voice. No backend, no API keys.</p>
+        <p class="jv-hint" style="margin-bottom:4px">Fully on-device — speech recognition (Whisper), an in-browser AI, and voice. Runs on your phone, no backend, no API keys.</p>
         <div class="jv-stage">
           <div class="jv-orbwrap"><div class="jv-pulse"></div><div class="jv-orb" id="jvOrb" title="Tap to talk"><div class="jv-face"><img src="ducki_logo.png" alt="DUCKi" style="width:78px;height:78px;border-radius:50%;object-fit:cover;display:block" /></div></div></div>
           <div class="jv-pill" id="jvState">Idle</div>
           <div class="jv-hint">Tap the orb or say <kbd>Hey DUCKi</kbd> (wake word on) — or just type below.</div>
         </div>
         <div class="jv-controls">
-          <button class="jv-btn" id="jvTalk">🎙️ Tap to talk</button>
+          <button class="jv-btn" id="jvTalk">🎙️ Tap &amp; talk</button>
           <button class="jv-btn ghost" id="jvWake">👂 Wake word: Off</button>
           <button class="jv-btn ghost" id="jvLoadLLM">🧠 Load local AI</button>
           <button class="jv-btn ghost" id="jvStop">⏹ Stop</button>
@@ -591,21 +591,114 @@
           if(Array.isArray(r))r=r[r.length-1].content;else if(typeof r==='string'){var p=r.split('assistant');r=(p[p.length-1]||r).trim();}
           return (r||'').trim()||fb(text);});});}
 
-      /* Speech recognition */
-      var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
-      var wakeOn=false,listening=false,wakeRecog=null;
-      function captureCmd(){if(!SR){note('Speech recognition not supported here \u2014 type instead.');return;}if(listening)return;
-        listening=true;setState('listening');var r=new SR();r.lang='en-US';r.interimResults=false;r.maxAlternatives=1;r.continuous=false;
-        r.onresult=function(e){var txt=e.results[0][0].transcript.trim();listening=false;if(txt)handleInput(txt);else setState('idle');};
-        r.onerror=function(e){listening=false;setState('idle');if(e.error==='not-allowed')note('Microphone blocked. Allow mic access to talk.');};
-        r.onend=function(){listening=false;if(ov.dataset.state==='listening')setState('idle');if(wakeOn)startWake();};
-        try{r.start();}catch(x){listening=false;}}
-      function startWake(){if(!SR||!wakeOn||listening)return;stopWake();wakeRecog=new SR();wakeRecog.lang='en-US';wakeRecog.continuous=true;wakeRecog.interimResults=true;
+      /* ===== On-device speech: Whisper via transformers.js (100% local, works on Android Chrome) =====
+         The command mic uses getUserMedia + MediaRecorder, then transcribes with Whisper-tiny in the
+         browser. Every path reports visible state, so it never listens forever in silence. */
+      var SR=window.SpeechRecognition||window.webkitSpeechRecognition;   /* only used for the optional wake word */
+      var hasMic=!!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia);
+      var wakeOn=false,listening=false,wakeRecog=null;                   /* listening = wake recognizer active */
+      var recording=false,mediaRec=null,mediaStream=null,chunks=[],recTimeout=null,vadRAF=null,vadCtx=null;
+
+      /* Whisper model (lazy: ~40MB on first use, then cached by the browser) */
+      var asr=null,asrLoading=false,asrDevice='wasm';
+      function asrLoad(){
+        if(asr)return Promise.resolve(asr);
+        if(asrLoading)return Promise.resolve(null);
+        asrLoading=true;note('Loading on-device speech\u2026 first time downloads ~40MB, then it caches.',0);
+        return import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2').then(function(T){
+          return (navigator.gpu?navigator.gpu.requestAdapter().then(function(a){if(a)asrDevice='webgpu';}).catch(function(){}):Promise.resolve()).then(function(){
+            return T.pipeline('automatic-speech-recognition','onnx-community/whisper-tiny.en',{dtype:'q4',device:asrDevice,
+              progress_callback:function(p){if(p.status==='progress'&&p.progress)note('Downloading speech model: '+Math.round(p.progress)+'%',0);}});});
+        }).then(function(p){asr=p;note('Speech ready ('+asrDevice+'). Tap the orb and talk.');return p;})
+        .catch(function(e){console.error(e);note('Could not load on-device speech \u2014 type to DUCKi instead.',7000);return null;})
+        .then(function(p){asrLoading=false;return p;});
+      }
+
+      /* Decode a recorded blob to mono 16 kHz Float32 samples for Whisper */
+      function toMono16k(arrayBuffer){
+        return new Promise(function(res,rej){
+          var AC=window.AudioContext||window.webkitAudioContext;var ac=new AC();
+          ac.decodeAudioData(arrayBuffer.slice(0)).then(function(buf){
+            var data=buf.getChannelData(0),srIn=buf.sampleRate,srOut=16000;
+            if(srIn===srOut){ac.close();return res(data);}
+            var ratio=srIn/srOut,len=Math.round(data.length/ratio),out=new Float32Array(len);
+            for(var i=0;i<len;i++)out[i]=data[Math.floor(i*ratio)]||0;
+            ac.close();res(out);
+          }).catch(function(e){try{ac.close();}catch(x){}rej(e);});
+        });
+      }
+
+      function toggleTalk(){if(recording)stopRecording();else startRecording();}
+
+      function startRecording(){
+        if(recording)return;
+        if(!hasMic){note('No microphone access in this browser \u2014 type to DUCKi below.',6000);return;}
+        stopWake(); /* free the mic from the wake listener while we capture a command */
+        navigator.mediaDevices.getUserMedia({audio:true}).then(function(stream){
+          mediaStream=stream;chunks=[];
+          var mime=(window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/webm'))?'audio/webm':
+                   (window.MediaRecorder&&MediaRecorder.isTypeSupported('audio/mp4'))?'audio/mp4':'';
+          try{mediaRec=mime?new MediaRecorder(stream,{mimeType:mime}):new MediaRecorder(stream);}catch(e){mediaRec=new MediaRecorder(stream);}
+          mediaRec.ondataavailable=function(e){if(e.data&&e.data.size)chunks.push(e.data);};
+          mediaRec.onstop=finishRecording;
+          mediaRec.start();recording=true;setState('listening');
+          note('Listening\u2026 tap the orb again to send (or just pause).',0);
+          setupVAD(stream);
+          recTimeout=setTimeout(function(){if(recording)stopRecording();},15000); /* hard cap 15s */
+        }).catch(function(e){
+          setState('idle');
+          note((e&&e.name==='NotAllowedError')?'Microphone blocked. Allow mic access in your browser to talk.':'Could not open the microphone \u2014 type below instead.',7000);
+          if(wakeOn)startWake();
+        });
+      }
+      function stopRecording(){
+        if(!recording)return;recording=false;clearTimeout(recTimeout);teardownVAD();
+        try{if(mediaRec&&mediaRec.state!=='inactive')mediaRec.stop();}catch(e){}
+      }
+      function finishRecording(){
+        if(mediaStream){mediaStream.getTracks().forEach(function(t){t.stop();});mediaStream=null;}
+        if(!chunks.length){setState('idle');note('Didn\u2019t catch any audio \u2014 try again, or type below.',5000);if(wakeOn)startWake();return;}
+        var blob=new Blob(chunks,{type:chunks[0].type||'audio/webm'});
+        setState('thinking');note('Transcribing on your device\u2026',0);
+        blob.arrayBuffer().then(toMono16k).then(function(samples){
+          if(!samples||samples.length<2400){setState('idle');note('That was too short to hear \u2014 try again.',5000);if(wakeOn)startWake();return;}
+          return asrLoad().then(function(p){
+            if(!p){setState('idle');if(wakeOn)startWake();return;}
+            return p(samples,{language:'english',task:'transcribe'}).then(function(out){
+              var txt=((out&&out.text)||'').trim();note('');
+              if(txt&&!/^\[?\s*(blank_audio|inaudible|silence|music|no speech)\s*\]?\.?$/i.test(txt)){handleInput(txt);}
+              else{setState('idle');note('Didn\u2019t catch that \u2014 try again, or type below.',5000);if(wakeOn)startWake();}
+            });
+          });
+        }).catch(function(e){console.error(e);setState('idle');note('Couldn\u2019t process the audio \u2014 type below instead.',6000);if(wakeOn)startWake();});
+      }
+
+      /* Voice-activity auto-stop: end ~1.2s after the user stops speaking */
+      function setupVAD(stream){
+        try{
+          var AC=window.AudioContext||window.webkitAudioContext;vadCtx=new AC();
+          var src=vadCtx.createMediaStreamSource(stream),an=vadCtx.createAnalyser();an.fftSize=512;src.connect(an);
+          var buf=new Uint8Array(an.fftSize),spoke=false,silence=0,last=performance.now();
+          (function loop(){
+            if(!recording)return;
+            an.getByteTimeDomainData(buf);var sum=0;for(var i=0;i<buf.length;i++){var v=(buf[i]-128)/128;sum+=v*v;}
+            var rms=Math.sqrt(sum/buf.length),now=performance.now(),dt=now-last;last=now;
+            if(rms>0.045){spoke=true;silence=0;}else if(spoke){silence+=dt;}
+            if(spoke&&silence>1200){stopRecording();return;}
+            vadRAF=requestAnimationFrame(loop);
+          })();
+        }catch(e){}
+      }
+      function teardownVAD(){if(vadRAF)cancelAnimationFrame(vadRAF);vadRAF=null;if(vadCtx){try{vadCtx.close();}catch(e){}vadCtx=null;}}
+
+      /* Optional wake word ("Hey DUCKi") — cheap keyword spotting via the browser speech engine
+         when present; the command itself is still captured + transcribed by Whisper. */
+      function startWake(){if(!SR||!wakeOn||listening||recording)return;stopWake();wakeRecog=new SR();wakeRecog.lang='en-US';wakeRecog.continuous=true;wakeRecog.interimResults=true;listening=true;
         wakeRecog.onresult=function(e){for(var i=e.resultIndex;i<e.results.length;i++){var s=e.results[i][0].transcript.toLowerCase();
-          if(CFG.WAKE.some(function(w){return s.indexOf(w)>=0;})){stopWake();ttsStop();note('Wake word detected.',1500);captureCmd();break;}}};
+          if(CFG.WAKE.some(function(w){return s.indexOf(w)>=0;})){stopWake();ttsStop();note('Wake word detected \u2014 talk now.',1600);startRecording();break;}}};
         wakeRecog.onerror=function(e){if(e.error==='not-allowed'){wakeOn=false;$('jvWake').textContent='\uD83D\uDC42 Wake word: Off';note('Mic blocked \u2014 wake word off.');}};
-        wakeRecog.onend=function(){if(wakeOn&&!listening)setTimeout(startWake,400);};try{wakeRecog.start();}catch(x){}}
-      function stopWake(){if(wakeRecog){try{wakeRecog.onend=null;wakeRecog.stop();}catch(x){}wakeRecog=null;}}
+        wakeRecog.onend=function(){listening=false;if(wakeOn&&!recording)setTimeout(startWake,400);};try{wakeRecog.start();}catch(x){listening=false;}}
+      function stopWake(){if(wakeRecog){try{wakeRecog.onend=null;wakeRecog.stop();}catch(x){}wakeRecog=null;}listening=false;}
 
       function handleInput(text){bubble('user',text);memAdd('user',text);setState('thinking');
         memAll().then(function(history){return $('jvBrain').value==='llm'?llmReply(text,history):Promise.resolve(fb(text));})
@@ -614,7 +707,7 @@
 
       /* Open/close */
       function openJarvis(e){if(e)e.preventDefault();ov.classList.add('open');document.body.style.overflow='hidden';}
-      function closeJarvis(){ov.classList.remove('open');document.body.style.overflow='';ttsStop();stopWake();listening=false;setState('idle');}
+      function closeJarvis(){ov.classList.remove('open');document.body.style.overflow='';ttsStop();stopRecording();stopWake();listening=false;setState('idle');}
       $('jarvisNavBtn')&&($('jarvisNavBtn').onclick=openJarvis);
       $('jarvisHeroBtn')&&($('jarvisHeroBtn').onclick=openJarvis);
       if(location.hash==='#jarvis')setTimeout(openJarvis,300);
@@ -622,9 +715,9 @@
       document.addEventListener('keydown',function(e){if(e.key==='Escape'&&ov.classList.contains('open'))closeJarvis();});
 
       /* Wire controls */
-      $('jvOrb').onclick=function(){ttsStop();captureCmd();};
-      $('jvTalk').onclick=function(){ttsStop();captureCmd();};
-      $('jvStop').onclick=function(){ttsStop();stopWake();listening=false;if(wakeOn)startWake();setState('idle');};
+      $('jvOrb').onclick=function(){ttsStop();toggleTalk();};
+      $('jvTalk').onclick=function(){ttsStop();toggleTalk();};
+      $('jvStop').onclick=function(){ttsStop();stopRecording();stopWake();if(wakeOn)startWake();setState('idle');};
       $('jvWake').onclick=function(){wakeOn=!wakeOn;$('jvWake').textContent='\uD83D\uDC42 Wake word: '+(wakeOn?'On':'Off');if(wakeOn){note('Listening for "Hey DUCKi"\u2026');startWake();}else{stopWake();}};
       $('jvLoadLLM').onclick=function(){$('jvBrain').value='llm';llmLoad();};
       $('jvBrain').onchange=function(){if($('jvBrain').value==='llm')llmLoad();};
@@ -638,7 +731,7 @@
       $('jvTts').checked=localStorage.getItem('ducki_tts')!=='0';$('jvTts').onchange=function(){localStorage.setItem('ducki_tts',$('jvTts').checked?'1':'0');};
 
       /* Boot */
-      if(!SR)note('Tip: this browser has no speech recognition \u2014 you can still type to DUCKi.',6000);
+      if(!hasMic)note('Tip: no microphone here \u2014 you can still type to DUCKi below.',6000);
       ttsInit();
       dbOpen().then(memAll).then(function(hist){if(hist&&hist.length){hist.slice(-12).forEach(function(m){bubble(m.role,m.content);});}
         else{bubble('system','Speak to DUCKi is online. Tap the orb, enable the wake word, or type. Load the local AI in settings for full reasoning \u2014 everything runs on your device.');}setState('idle');});
