@@ -15,6 +15,47 @@
   var members = {}           // peerId -> { nick, host }
   var pending = {}           // host-only: peerId -> { nick, conn }
 
+  /* ---------- global live lobby via Supabase Realtime Presence (no tables/SQL) ---------- */
+  var sb = null, lobbyCh = null, presReady = false, myRoomCode = null
+  var presKey = 'p' + Math.random().toString(36).slice(2, 9)
+  function myAlias() { var n = ($('nick') && $('nick').value || '').trim(); return n || ('Duck' + presKey.slice(-3).toUpperCase()) }
+  function lobbyState() { return (lobbyCh && lobbyCh.presenceState && lobbyCh.presenceState()) || {} }
+  function trackPres() { if (lobbyCh && presReady) { try { lobbyCh.track({ alias: myAlias(), room: myRoomCode, ts: Date.now() }) } catch (e) {} } }
+  function renderLobbyLive() {
+    var st = lobbyState(), people = [], rooms = {}
+    Object.keys(st).forEach(function (k) { var m = st[k] && st[k][0]; if (!m) return; people.push(m.alias || 'Duck'); if (m.room) rooms[m.room] = (rooms[m.room] || 0) + 1 })
+    var n = people.length, rc = Object.keys(rooms).length
+    var t = $('lobbyLiveText')
+    if (t) t.textContent = n + (n === 1 ? ' duck' : ' ducks') + ' online now' + (rc ? (' \u00b7 ' + rc + (rc === 1 ? ' house' : ' houses') + ' live') : ' \u00b7 be the first to open a house')
+    var box = $('onlineAliases')
+    if (box) box.innerHTML = people.slice(0, 40).map(function (a) { return '<span style="background:#0a0f1e;border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--cyan)">' + escapeHtml(a) + '</span>' }).join('')
+  }
+  function openRooms() { // rooms with 1..MAX-1 ducks, fullest first (fill before spawning a new one)
+    var st = lobbyState(), rooms = {}
+    Object.keys(st).forEach(function (k) { var m = st[k] && st[k][0]; if (m && m.room) rooms[m.room] = (rooms[m.room] || 0) + 1 })
+    return Object.keys(rooms).filter(function (r) { return rooms[r] > 0 && rooms[r] < MAX }).sort(function (a, b) { return rooms[b] - rooms[a] })
+  }
+  function autoJoin() {
+    myNick = ($('nick').value || '').trim() || ('Guest' + rand(3))
+    var open = openRooms()
+    if (open.length) { toast('Found an open house \u2014 asking the host to let you in\u2026'); joinRoom(open[0].replace('DUCKI-', '')) }
+    else { toast('No open houses right now \u2014 opening a fresh one. You\u2019re the host.'); createRoom() }
+  }
+  function lobbyConnect() {
+    var cfg = window.DUCKHOUSE_SB
+    var t = $('lobbyLiveText')
+    if (!cfg || !cfg.url || !cfg.key) { if (t) t.textContent = 'Live lobby not configured.'; return }
+    import('https://esm.run/@supabase/supabase-js@2').then(function (M) {
+      sb = M.createClient(cfg.url, cfg.key, { realtime: { params: { eventsPerSecond: 5 } } })
+      lobbyCh = sb.channel('duckhouse-lobby', { config: { presence: { key: presKey } } })
+      lobbyCh.on('presence', { event: 'sync' }, renderLobbyLive)
+      lobbyCh.on('presence', { event: 'join' }, renderLobbyLive)
+      lobbyCh.on('presence', { event: 'leave' }, renderLobbyLive)
+      lobbyCh.subscribe(function (status) { if (status === 'SUBSCRIBED') { presReady = true; trackPres() } })
+    }).catch(function (e) { console.error(e); if (t) t.textContent = 'Live lobby unavailable right now.' })
+  }
+
+
   function toast(msg) {
     var t = document.createElement('div'); t.className = 'toast'; t.textContent = msg
     $('toasts').appendChild(t); setTimeout(function () { t.style.opacity = '0'; setTimeout(function(){ t.remove() }, 400) }, 4200)
@@ -238,17 +279,18 @@
 
   function enterRoom() {
     $('lobby').classList.add('hidden'); $('room').classList.remove('hidden')
+    myRoomCode = (fullCode || hostId || myId || null); trackPres()
     $('roomCode').textContent = (fullCode || hostId || myId || '').replace('DUCKI-', '')
     $('hostPanel').classList.toggle('hidden', !isHost)
     $('roomHint').textContent = isHost ? 'You are the host. Approve join requests above; hover a tile to kick someone.' : 'Connected. Anyone can leave anytime; the host moderates the room.'
   }
-  function showLobby() { $('room').classList.add('hidden'); $('lobby').classList.remove('hidden'); $('liveCount').textContent = 'in lobby' }
+  function showLobby() { $('room').classList.add('hidden'); $('lobby').classList.remove('hidden'); $('liveCount').textContent = 'in lobby'; myRoomCode = null; trackPres() }
   function cleanup() {
     Object.keys(conns).forEach(function (id){ try{conns[id].close()}catch(e){} })
     Object.keys(calls).forEach(function (id){ try{calls[id].close()}catch(e){} })
     if (localStream) localStream.getTracks().forEach(function (t){ t.stop() })
     if (peer) { try { peer.destroy() } catch (e) {} }
-    peer=null; conns={}; calls={}; members={}; pending={}; isHost=false; localStream=null
+    peer=null; conns={}; calls={}; members={}; pending={}; isHost=false; localStream=null; myRoomCode=null
     $('tiles').innerHTML=''; $('requests').innerHTML=''
   }
 
@@ -293,6 +335,9 @@
         var nk = $('nick'); if (nk) nk.focus()
       }
     } catch (e) {}
+    if ($('autoBtn')) $('autoBtn').onclick = autoJoin
+    if ($('nick')) $('nick').addEventListener('change', trackPres)
+    lobbyConnect()
     window.addEventListener('beforeunload', cleanup)
     matrix()
   }
