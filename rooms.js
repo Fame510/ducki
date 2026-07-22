@@ -221,6 +221,10 @@
   }
 
   var fullCode = ''
+  function inviteURL () {
+    var code = ($('roomCode').textContent || '').trim()
+    return location.origin + location.pathname + '?room=' + encodeURIComponent(code)
+  }
   function joinRoom(code) {
     isHost = false
     var target = code.indexOf('DUCKI-') === 0 ? code : ('DUCKI-' + code)
@@ -259,8 +263,16 @@
       joinRoom(code)
     }
     $('copyCode').onclick = function () {
-      var code = $('roomCode').textContent
-      navigator.clipboard && navigator.clipboard.writeText(code); toast('Invite code copied: ' + code)
+      var url = inviteURL()
+      if (navigator.clipboard) navigator.clipboard.writeText(url)
+      toast('Invite link copied — paste it to anyone.')
+    }
+    if ($('shareBtn')) $('shareBtn').onclick = function () {
+      var url = inviteURL(), code = $('roomCode').textContent
+      var text = 'Come join me live in The Duck House 🦆 — room ' + code
+      if (navigator.share) { navigator.share({ title: 'The Duck House', text: text, url: url }).catch(function () {}) }
+      else if (navigator.clipboard) { navigator.clipboard.writeText(url); toast('Invite link copied — text it to a friend.') }
+      else { toast(url) }
     }
     $('leaveBtn').onclick = function () { if (isHost) broadcast('kick_peer', { id: '__host_left__' }); cleanup(); showLobby() }
     $('micBtn').onclick = function () {
@@ -271,6 +283,16 @@
       if (!localStream) return; var v = localStream.getVideoTracks()[0]; if (!v) return
       v.enabled = !v.enabled; $('camBtn').textContent = v.enabled ? '📷 Camera off' : '📷 Camera on'
     }
+    // Invited via a shared link (?room=CODE): prefill the code and prompt for a nickname.
+    try {
+      var invited = (new URLSearchParams(location.search).get('room') || '').trim().toUpperCase()
+      if (invited) {
+        $('roomInput').value = invited
+        var b = $('inviteBanner')
+        if (b) { b.classList.remove('hidden'); b.innerHTML = '🎉 You’ve been invited to room <b>' + escapeHtml(invited) + '</b>. Enter a nickname, then tap <b>Join</b>.' }
+        var nk = $('nick'); if (nk) nk.focus()
+      }
+    } catch (e) {}
     window.addEventListener('beforeunload', cleanup)
     matrix()
   }
