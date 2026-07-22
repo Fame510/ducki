@@ -11,10 +11,22 @@ DUCKi is a fully client-side web app hosted on GitHub Pages. There is no backend
 ## What's inside
 
 ### 🧠 DUCKi Console (`app.html`)
-A bring-your-own-key AI workspace. Add your own LLM key (OpenAI-compatible), and optionally connect:
-- **GitHub** — read/manage repos with a personal access token
-- **Gmail** — via your own Google OAuth client
-- **Firecrawl** — web scraping/search with your key
+A full autonomous agent that runs its own plan → tool → verify loop in your browser. Pick a brain, ask, and it *does the work* — chaining many tool calls before it answers, then reporting the real links and results.
+
+**Brains** — no key, or your own key:
+- **On-device Genius** (Llama-3.2-1B, WebGPU) and **On-device Light** (Qwen2.5-0.5B) — run fully on your device, **no key, fully private**
+- Any cloud LLM with your key: **OpenAI, Anthropic (Claude), Gemini, DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow**
+
+**Tools** — a compounding toolkit:
+- **Web, no key needed** — `web_search`, `read_url` (read any page as clean text), `generate_image` (text-to-image, shown inline)
+- **Web, premium (free Firecrawl key)** — scrape, structured extraction, and human-like **browser automation** (click / type / scroll / submit forms)
+- **Code & data** — `run_js` executes JavaScript in-browser for math, parsing, algorithms, and tables
+- **GitHub** — read repos (incl. private), search, create repos/issues, **commit & push code**, create gists
+- **Gmail** — read and summarize your mail
+- **Universal connector** — `http_request` calls **any REST API** (Notion, Airtable, Linear, Stripe, weather, news, CRMs — thousands of services)
+- **Memory** — remembers durable facts about you across sessions, on-device
+
+**Connections vault** — store an API key for any service once; DUCKi references it as `{{vault:NAME}}` and the secret is injected on your device — **never sent to the model**. Ask *"what can you do?"* and DUCKi enumerates its full, current ability list.
 
 Everything is stored locally in your browser. No server ever sees your keys.
 
