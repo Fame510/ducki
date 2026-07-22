@@ -529,6 +529,7 @@
         PERS:"You are DUCKi, an autonomous AI agent created by Aeon Dux. You speak with calm confidence, dry wit, and concise precision. Keep replies short unless asked for detail. Never say you are a language model.",
         MODEL:'onnx-community/Qwen2.5-0.5B-Instruct',MAX:20,DB:'ducki-jarvis',STORE:'memory'};
       var $=function(id){return document.getElementById(id);};
+      function isMobileLike(){try{var ua=navigator.userAgent||'';if(/Mobi|Android|iPhone|iPod|IEMobile|BlackBerry|Windows Phone/i.test(ua))return true;var touch=(navigator.maxTouchPoints||0)>1;var small=Math.min(screen.width||9999,screen.height||9999)<820;return touch&&small;}catch(e){return false;}}
       var ov=$('jarvisOverlay');
       function setState(s){ov.dataset.state=s;$('jvState').textContent=s.charAt(0).toUpperCase()+s.slice(1);}
       function note(t,to){$('jvNote').textContent=t||'';if(t&&to!==0){setTimeout(function(){if($('jvNote').textContent===t)$('jvNote').textContent='';},to||4500);}}
@@ -576,6 +577,7 @@
       /* LLM brain */
       var gen=null,llmLoading=false,device='wasm';
       function llmLoad(){if(gen)return Promise.resolve(gen);if(llmLoading)return Promise.resolve(null);
+        if(isMobileLike()){note('On-device AI needs a desktop \u2014 a phone runs out of memory. Staying in fast smart-reply mode here.',9000);$('jvBrain').value='fallback';return Promise.resolve(null);}
         llmLoading=true;setState('thinking');note('Loading local AI\u2026 first load downloads the model, then it caches.',0);
         return import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2').then(function(T){
           return (navigator.gpu?navigator.gpu.requestAdapter().then(function(a){if(a)device='webgpu';}).catch(function(){}):Promise.resolve()).then(function(){
@@ -597,6 +599,7 @@
       function wllmLoad(){
         if(wllm)return Promise.resolve(wllm);
         if(wllmLoading)return Promise.resolve(null);
+        if(isMobileLike()){note('On-device brains need a desktop \u2014 a phone runs out of memory and the tab crashes. Staying in fast smart-reply mode here.',9000);$('jvBrain').value='fallback';return Promise.resolve(null);}
         if(!navigator.gpu){note('Genius mode needs a WebGPU browser (Chrome on Android/desktop) \u2014 using the light on-device model instead.',8000);$('jvBrain').value='llm';return llmLoad().then(function(){return null;});}
         wllmLoading=true;setState('thinking');note('Loading genius model (Llama-3.2-1B) on your device\u2026 first load ~900MB, then it caches.',0);
         return import('https://esm.run/@mlc-ai/web-llm@0.2.79').then(function(M){
