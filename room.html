@@ -80,6 +80,7 @@
     <div id="lobby" class="lobby">
       <h1>Welcome to The Duck House 🦆</h1>
       <p>Live video with up to 6 people, peer-to-peer. Pick a nickname, then start a room or join one with a code. 📹📞</p>
+      <div id="inviteBanner" class="hint hidden" style="color:var(--gold);border:1px solid var(--gold);border-radius:10px;padding:10px 12px"></div>
       <label>Anonymous nickname</label>
       <input id="nick" maxlength="20" placeholder="e.g. NightOwl, Maverick…" />
       <label>Room code (to join an existing room)</label>
@@ -97,7 +98,8 @@
     <div id="room" class="hidden">
       <div class="bar">
         <span>Room: <span class="roomcode" id="roomCode">—</span></span>
-        <button class="muted-btn" id="copyCode">Copy invite code</button>
+        <button class="muted-btn" id="copyCode">Copy link</button>
+        <button class="btn-primary" id="shareBtn">🔗 Invite a friend</button>
         <button class="muted-btn" id="micBtn">🎤 Mute</button>
         <button class="muted-btn" id="camBtn">📷 Camera off</button>
         <button class="btn-danger" id="leaveBtn" style="margin-left:auto">Leave</button>
