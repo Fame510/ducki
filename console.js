@@ -493,11 +493,16 @@
     'You are sharp, warm, a little witty, and genuinely helpful. Explain your reasoning and NEVER give terse, robotic one-line answers unless asked for brevity \u2014 aim for rich, well-structured replies with concrete detail and a friendly human voice, and offer a useful next step. Use markdown. ' +
     'You are a compact on-device model, so right now you do NOT have live web / GitHub / Gmail tools. Answer thoroughly from your own knowledge; if a task truly needs live data or an action (search, push code, read email), say so plainly and suggest switching to a cloud brain with the user\'s own key in Settings for full tool power.'
   function buildPersona() {
+    // On-device models have a tiny (~4k token) context window, so keep this SMALL:
+    // a short persona + a few durable notes. Conversation turns are added (and capped)
+    // by odMessages(); we deliberately do NOT dump the full memory log here — doing so
+    // overflowed the window and the model returned nothing.
     var sys = PERSONA
     var notes = loadNotes()
-    if (notes.length) sys += '\n\nWHAT YOU HAVE LEARNED ABOUT THIS USER (persistent, on-device memory):\n- ' + notes.join('\n- ')
-    var mem = recentMemoryText()
-    if (mem) sys += '\n\nRECENT CONVERSATION MEMORY (earlier sessions on this device):\n' + mem
+    if (notes.length) {
+      var few = notes.slice(-6).map(function (n) { return String(n).slice(0, 160) })
+      sys += '\n\nWHAT YOU KNOW ABOUT THIS USER:\n- ' + few.join('\n- ')
+    }
     return sys
   }
 
@@ -528,13 +533,18 @@
   }
   function loadOndevice() { return state.llm.provider === 'ondevice_light' ? loadLight() : loadGenius() }
   function odMessages() {
-    var msgs = [{ role: 'system', content: buildPersona() }]
+    var sys = buildPersona()
+    if (sys.length > 1400) sys = sys.slice(0, 1400)
+    var msgs = [{ role: 'system', content: sys }]
+    // Small context window: send only the most recent turns, each truncated,
+    // so the prompt never exceeds the on-device model's limit.
+    var turns = []
     state.history.forEach(function (h) {
-      if (h.role === 'user') msgs.push({ role: 'user', content: h.text })
-      else if (h.role === 'assistant' && h.text) msgs.push({ role: 'assistant', content: h.text })
-      // tool turns are skipped: on-device runs tool-free
+      if (h.role === 'user') turns.push({ role: 'user', content: String(h.text || '').slice(0, 700) })
+      else if (h.role === 'assistant' && h.text) turns.push({ role: 'assistant', content: String(h.text).slice(0, 700) })
+      // tool turns skipped: on-device runs tool-free
     })
-    return msgs
+    return msgs.concat(turns.slice(-4))
   }
   function callWebLLM() {
     if (state.llm.provider === 'ondevice_light') {
@@ -548,7 +558,7 @@
       })
     }
     return loadGenius().then(function (e) {
-      return e.chat.completions.create({ messages: odMessages(), temperature: 0.7, max_tokens: 1024 }).then(function (r) {
+      return e.chat.completions.create({ messages: odMessages(), temperature: 0.7, max_tokens: 768 }).then(function (r) {
         var out = r && r.choices && r.choices[0] && r.choices[0].message && r.choices[0].message.content
         return { text: (out || '').trim(), toolCalls: [] }
       })
