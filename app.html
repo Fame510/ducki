@@ -216,8 +216,23 @@
           <div class="hint">
             Web scraping/crawling. Get a key at
             <a href="https://www.firecrawl.dev/app/api-keys" target="_blank" rel="noopener">firecrawl.dev</a>.
-            Browser calls may be blocked by CORS — if so, a proxy is needed.
+            Optional now — web search &amp; page reading work with <b>no key</b>. A Firecrawl key adds premium scraping, structured extraction, and human-like browser automation.
           </div>
+        </div>
+
+        <!-- Connections vault (universal connector) -->
+        <div class="conn">
+          <div class="conn-head">
+            <div class="conn-title"><span class="dot" id="dot-vault"></span> Connections vault</div>
+          </div>
+          <label>Name (e.g. NOTION, WEATHER)</label>
+          <input id="vaultName" placeholder="SERVICE_NAME" autocomplete="off" />
+          <label>Secret / API key</label>
+          <input id="vaultValue" type="password" placeholder="paste secret" autocomplete="off" />
+          <button class="primary" id="saveVault">Add key</button>
+          <div class="status-line" id="vaultStatus"></div>
+          <div id="vaultList" class="hint"></div>
+          <div class="hint">Store an API key for <b>any</b> service with a REST API. DUCKi reaches it through its universal connector — reference a saved key in a request as <code>{{vault:NAME}}</code>; the secret is injected on your device and never sent to the model. This is how DUCKi connects to thousands of services.</div>
         </div>
 
         <!-- Gmail -->
@@ -249,14 +264,14 @@
           <div class="empty" id="empty">
             <img src="ducki_logo.png" width="96" height="96" alt="DUCKi" style="border-radius:50%;display:block;margin:0 auto;" />
             <h2 style="margin:14px 0 8px; color:var(--text); font-size:20px;">DUCKi is ready</h2>
-            <p>Add an LLM key in the sidebar, then ask DUCKi to get things done. Connect GitHub, Gmail and Firecrawl to give it real tools.</p>
+            <p>Pick a brain in the sidebar — an <b>on-device model needs no key</b> — then ask DUCKi to get things done. Web search, page reading and image generation work with zero setup; connect GitHub, Gmail, or any API key to unlock more.</p>
           <a href="./room.html" style="display:inline-flex;align-items:center;gap:8px;margin-top:14px;text-decoration:none;font-weight:700;color:#1a1a2e;background:linear-gradient(90deg,#f5a623,#4fc3f7);padding:10px 18px;border-radius:12px;box-shadow:0 6px 22px rgba(79,195,247,.35);">📹 Enter THE DUCK HOUSE — live video rooms 📞</a>
           <div style="margin-top:8px;color:var(--muted);font-size:12px;">Hang out on camera with up to 6 people. Pick a nickname, you host or join with a code.</div>
             <div class="examples" id="examples">
-              <button data-ex="Who am I on GitHub and what are my 5 most recently updated repos?">My GitHub repos</button>
-              <button data-ex="Read the README of Fame510/ducki and summarize what the project does.">Summarize a repo</button>
-              <button data-ex="Scrape https://news.ycombinator.com and list the top 5 story titles.">Scrape a page</button>
-              <button data-ex="Check my latest unread Gmail messages and summarize them.">Summarize Gmail</button>
+              <button data-ex="What can you do? Give me your full capability list.">What can you do?</button>
+              <button data-ex="Search the web for the latest AI agent news and summarize the top 5 stories with links.">Research the web</button>
+              <button data-ex="Generate an image of a cyberpunk rubber duck hacker with neon glasses.">Make an image</button>
+              <button data-ex="Use run_js to compute the first 20 Fibonacci numbers and show them in a table.">Run some code</button>
             </div>
           </div>
         </div>
