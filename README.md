@@ -14,8 +14,8 @@ DUCKi is a fully client-side web app hosted on GitHub Pages. There is no backend
 A full autonomous agent that runs its own plan → tool → verify loop in your browser. Pick a brain, ask, and it *does the work* — chaining many tool calls before it answers, then reporting the real links and results.
 
 **Brains** — no key, or your own key:
-- **On-device Genius** (Llama-3.2-1B, WebGPU) and **On-device Light** (Qwen2.5-0.5B) — run fully on your device, **no key, fully private**
-- Any cloud LLM with your key: **OpenAI, Anthropic (Claude), Gemini, DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow**
+- **On-device Genius** (Llama-3.2-1B, WebGPU) and **On-device Light** (Qwen2.5-0.5B) — run fully on your device, **no key, fully private**. These are a **desktop feature**: they need desktop-class memory (a phone tab runs out of RAM and crashes), so on mobile DUCKi steers you to a cloud brain instead.
+- Any cloud LLM with your key — **works everywhere, including phones**: **Groq** (free, very fast), **Google Gemini** (free), **OpenAI, Anthropic (Claude), DeepSeek, GLM, Qwen, Kimi, OpenRouter, SiliconFlow**. On a phone, paste a free Groq or Gemini key and DUCKi runs at full power with no crashes.
 
 **Tools** — a compounding toolkit:
 - **Web, no key needed** — `web_search`, `read_url` (read any page as clean text), `generate_image` (text-to-image, shown inline)
@@ -34,7 +34,7 @@ Everything is stored locally in your browser. No server ever sees your keys.
 A hands-free voice assistant that runs **100% in your browser** — no cloud, no API key:
 - **On-device speech recognition** via **Whisper** (transformers.js, WebGPU/WASM) — works on Android Chrome and desktop
 - Optional **"Hey DUCKi" wake word**
-- **On-device LLM** (Qwen2.5-0.5B) for real reasoning, or an instant fast-reply mode
+- **On-device LLM** (Qwen2.5-0.5B / Llama-3.2-1B) for real reasoning **on desktop**, or the instant smart-reply mode that works anywhere (on a phone, DUCKi stays in smart-reply mode since local models need desktop memory)
 - **Voice replies** (browser speech synthesis) and **local memory** (IndexedDB)
 
 Tap the orb, talk, pause — DUCKi transcribes on your device and answers.
