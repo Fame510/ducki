@@ -581,7 +581,7 @@
           return (navigator.gpu?navigator.gpu.requestAdapter().then(function(a){if(a)device='webgpu';}).catch(function(){}):Promise.resolve()).then(function(){
             return T.pipeline('text-generation',CFG.MODEL,{dtype:'q4',device:device,progress_callback:function(p){if(p.status==='progress'&&p.progress)note('Downloading model: '+Math.round(p.progress)+'%',0);}});});
         }).then(function(g){gen=g;$('jvLLMmode')&&($('jvLLMmode').textContent='Qwen2.5-0.5B');note('Local AI ready ('+device+').');return g;})
-        .catch(function(e){console.error(e);note('Local AI failed to load \u2014 staying in fast mode.',7000);$('jvBrain').value='fallback';return null;})
+        .catch(function(e){console.error(e);note('Local AI failed to load: '+((e&&e.message)||e)+' \u2014 staying in fast mode.',9000);$('jvBrain').value='fallback';return null;})
         .then(function(g){llmLoading=false;setState('idle');return g;});}
       function llmReply(text,history){return llmLoad().then(function(g){if(!g)return fb(text);
         var name=$('jvName').value.trim();var sys=CFG.PERS+(name?(" The user's name is "+name+"."):"");
@@ -602,7 +602,7 @@
         return import('https://esm.run/@mlc-ai/web-llm@0.2.79').then(function(M){
           return M.CreateMLCEngine(WLLM_MODEL,{initProgressCallback:function(p){note('Genius model: '+((p&&p.text)||'loading\u2026'),0);}});
         }).then(function(e){wllm=e;note('Genius mode ready \u2014 running fully on your device.');return e;})
-        .catch(function(err){console.error(err);note('Genius model couldn\u2019t load here \u2014 switching to the light on-device model.',8000);$('jvBrain').value='llm';return null;})
+        .catch(function(err){console.error(err);note('Genius model couldn\u2019t load: '+((err&&err.message)||err)+' \u2014 switching to the light on-device model.',9000);$('jvBrain').value='llm';return null;})
         .then(function(e){wllmLoading=false;setState('idle');return e;});
       }
       function wllmReply(text,history){return wllmLoad().then(function(e){if(!e)return llmReply(text,history);
@@ -629,10 +629,10 @@
         asrLoading=true;note('Loading on-device speech\u2026 first time downloads ~40MB, then it caches.',0);
         return import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2').then(function(T){
           return (navigator.gpu?navigator.gpu.requestAdapter().then(function(a){if(a)asrDevice='webgpu';}).catch(function(){}):Promise.resolve()).then(function(){
-            return T.pipeline('automatic-speech-recognition','onnx-community/whisper-tiny.en',{dtype:'q4',device:asrDevice,
+            return T.pipeline('automatic-speech-recognition','onnx-community/whisper-tiny.en',{dtype:{encoder_model:'fp32',decoder_model_merged:'q4'},device:'wasm',
               progress_callback:function(p){if(p.status==='progress'&&p.progress)note('Downloading speech model: '+Math.round(p.progress)+'%',0);}});});
-        }).then(function(p){asr=p;note('Speech ready ('+asrDevice+'). Tap the orb and talk.');return p;})
-        .catch(function(e){console.error(e);note('Could not load on-device speech \u2014 type to DUCKi instead.',7000);return null;})
+        }).then(function(p){asr=p;note('Speech ready. Tap the orb and talk.');return p;})
+        .catch(function(e){console.error(e);note('Speech model failed to load: '+((e&&e.message)||e)+' \u2014 type to DUCKi below instead.',9000);return null;})
         .then(function(p){asrLoading=false;return p;});
       }
 
