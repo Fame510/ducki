@@ -43,7 +43,9 @@
     qwen: 'qwen-turbo',
     kimi: 'moonshot-v1-8k',
     openrouter: 'deepseek/deepseek-chat-v3-0324:free',
-    siliconflow: 'deepseek-ai/DeepSeek-V3'
+    siliconflow: 'deepseek-ai/DeepSeek-V3',
+    ondevice: 'Llama-3.2-1B (on-device, no key)',
+    ondevice_light: 'Qwen2.5-0.5B (on-device, no key)'
   }
   var MODELS = {
     openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'o4-mini'],
@@ -373,6 +375,74 @@
     'If a tool errors, explain what happened in plain language and suggest a fix. ' +
     '\n\nUse markdown: headings, bold, bullet lists, and fenced code blocks for code. Be the most capable, personable agent the user has ever used.'
 
+  // ----- persona-only system for on-device (tool-free) brains -----
+  var PERSONA = 'You are DUCKi, an AI assistant by AEON DUX, running 100% on the user\'s own device in their browser \u2014 no server, no API key, fully private. ' +
+    'Your name is DUCKi, created by AEON DUX; never call yourself any other name and never mention the framework you run on. ' +
+    'You are sharp, warm, a little witty, and genuinely helpful. Explain your reasoning and NEVER give terse, robotic one-line answers unless asked for brevity \u2014 aim for rich, well-structured replies with concrete detail and a friendly human voice, and offer a useful next step. Use markdown. ' +
+    'You are a compact on-device model, so right now you do NOT have live web / GitHub / Gmail tools. Answer thoroughly from your own knowledge; if a task truly needs live data or an action (search, push code, read email), say so plainly and suggest switching to a cloud brain with the user\'s own key in Settings for full tool power.'
+  function buildPersona() {
+    var sys = PERSONA
+    var notes = loadNotes()
+    if (notes.length) sys += '\n\nWHAT YOU HAVE LEARNED ABOUT THIS USER (persistent, on-device memory):\n- ' + notes.join('\n- ')
+    var mem = recentMemoryText()
+    if (mem) sys += '\n\nRECENT CONVERSATION MEMORY (earlier sessions on this device):\n' + mem
+    return sys
+  }
+
+  // ----- on-device engines: WebLLM (genius) + transformers.js (light) -----
+  var odGenius = null, odGeniusLoading = null          // WebLLM engine
+  var odLight = null, odLightLoading = null             // transformers.js pipeline
+  function odIsProvider(p) { return p === 'ondevice' || p === 'ondevice_light' }
+  function loadGenius() {
+    if (odGenius) return Promise.resolve(odGenius)
+    if (odGeniusLoading) return odGeniusLoading
+    if (!navigator.gpu) return Promise.reject(new Error('This browser has no WebGPU. Pick "On-device light" (works anywhere), or a cloud brain with your own key.'))
+    status('llmStatus', 'Loading Genius model (Llama-3.2-1B) on your device\u2026 first load ~900MB, then it caches.', '')
+    odGeniusLoading = import('https://esm.run/@mlc-ai/web-llm@0.2.79').then(function (M) {
+      return M.CreateMLCEngine('Llama-3.2-1B-Instruct-q4f32_1-MLC', { initProgressCallback: function (p) { status('llmStatus', 'Genius model: ' + ((p && p.text) || 'loading\u2026'), '') } })
+    }).then(function (e) { odGenius = e; odGeniusLoading = null; setDot('dot-llm', 'on'); status('llmStatus', '\u2713 Genius on-device ready \u2014 runs fully on your device, no key.', 'ok'); return e })
+      .catch(function (err) { odGeniusLoading = null; setDot('dot-llm', 'err'); status('llmStatus', '\u2717 ' + err.message, 'err'); throw err })
+    return odGeniusLoading
+  }
+  function loadLight() {
+    if (odLight) return Promise.resolve(odLight)
+    if (odLightLoading) return odLightLoading
+    status('llmStatus', 'Loading light on-device model (Qwen2.5-0.5B)\u2026 first load downloads once, then caches.', '')
+    odLightLoading = import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2').then(function (T) {
+      return T.pipeline('text-generation', 'onnx-community/Qwen2.5-0.5B-Instruct', { dtype: 'q4', device: (navigator.gpu ? 'webgpu' : 'wasm'), progress_callback: function (p) { if (p.status === 'progress' && p.progress) status('llmStatus', 'Downloading model: ' + Math.round(p.progress) + '%', '') } })
+    }).then(function (g) { odLight = g; odLightLoading = null; setDot('dot-llm', 'on'); status('llmStatus', '\u2713 Light on-device ready \u2014 runs fully on your device, no key.', 'ok'); return g })
+      .catch(function (err) { odLightLoading = null; setDot('dot-llm', 'err'); status('llmStatus', '\u2717 ' + err.message, 'err'); throw err })
+    return odLightLoading
+  }
+  function loadOndevice() { return state.llm.provider === 'ondevice_light' ? loadLight() : loadGenius() }
+  function odMessages() {
+    var msgs = [{ role: 'system', content: buildPersona() }]
+    state.history.forEach(function (h) {
+      if (h.role === 'user') msgs.push({ role: 'user', content: h.text })
+      else if (h.role === 'assistant' && h.text) msgs.push({ role: 'assistant', content: h.text })
+      // tool turns are skipped: on-device runs tool-free
+    })
+    return msgs
+  }
+  function callWebLLM() {
+    if (state.llm.provider === 'ondevice_light') {
+      return loadLight().then(function (g) {
+        return g(odMessages(), { max_new_tokens: 700, temperature: 0.7, do_sample: true }).then(function (out) {
+          var r = out[0].generated_text
+          if (Array.isArray(r)) r = r[r.length - 1].content
+          else if (typeof r === 'string') { var parts = r.split('assistant'); r = (parts[parts.length - 1] || r).trim() }
+          return { text: (r || '').trim(), toolCalls: [] }
+        })
+      })
+    }
+    return loadGenius().then(function (e) {
+      return e.chat.completions.create({ messages: odMessages(), temperature: 0.7, max_tokens: 1024 }).then(function (r) {
+        var out = r && r.choices && r.choices[0] && r.choices[0].message && r.choices[0].message.content
+        return { text: (out || '').trim(), toolCalls: [] }
+      })
+    })
+  }
+
   // ===================== CLIENT-SIDE MEMORY (on-device) =====================
   var MEM_KEY = 'ducki_memory_v1'
   var NOTES_KEY = 'ducki_notes_v1'
@@ -540,6 +610,7 @@
     if (p === 'siliconflow') return callOpenAI('https://api.siliconflow.com/v1')()
     if (p === 'anthropic') return callAnthropic()
     if (p === 'gemini') return callGemini()
+    if (odIsProvider(p)) return callWebLLM()
     return Promise.reject(new Error('Unknown provider'))
   }
 
@@ -551,7 +622,7 @@
     var inputEl = $('input')
     var text = inputEl.value.trim()
     if (!text || running) return
-    if (!state.llm.key) { banner('Add an LLM API key in the sidebar to start.'); return }
+    if (!odIsProvider(state.llm.provider) && !state.llm.key) { banner('Add an LLM API key in the sidebar — or pick an on-device brain (no key needed) at the top of the list.'); return }
     inputEl.value = ''; autosize(inputEl)
     pushUser(text)
     runAgent()
@@ -704,7 +775,7 @@
     $('llmKey').value = state.llm.key
     $('llmModel').value = state.llm.model
     populateModels(p)
-    setDot('dot-llm', state.llm.key ? 'on' : '')
+    setDot('dot-llm', odIsProvider(p) ? ((odGenius || odLight) ? 'on' : '') : (state.llm.key ? 'on' : ''))
   }
 
   function initEvents() {
@@ -715,6 +786,7 @@
     })
     $('saveLlm').addEventListener('click', function () {
       var p = state.llm.provider
+      if (odIsProvider(p)) { loadOndevice(); return }
       state.llm.key = $('llmKey').value.trim()
       state.llm.model = $('llmModel').value.trim() || DEFAULT_MODEL[p]
       LS.set('ec_llm_key_' + p, state.llm.key); LS.set('ec_llm_model_' + p, state.llm.model)
